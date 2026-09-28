@@ -14,3 +14,6 @@ Same as the upstream SyncLyrics add-on, built locally with one patch
 
 The Docker build fails loudly if upstream changes these files and the patch no
 longer applies.
+- **QQ Music:** its search endpoint answers HTTP 500 to every query. Server errors
+  are no longer retried (was 4 attempts, ~15 s and 5 ERROR lines per song); instead
+  QQ is skipped for 60 minutes with a single warning, then tried again.

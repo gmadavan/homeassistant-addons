@@ -1,0 +1,75 @@
+diff --git a/providers/qq.py b/providers/qq.py
+index 2b873a6..84a4fc1 100644
+--- a/providers/qq.py
++++ b/providers/qq.py
+@@ -29,6 +29,9 @@ logger = get_logger(__name__)
+ # logger = logging.getLogger(__name__)
+ 
+ class QQMusicProvider(LyricsProvider):
++    COOLDOWN_SECONDS = 3600  # skip QQ this long after it returns a 5xx
++    _cooldown_until = 0.0
++
+     """QQ Music lyrics provider"""
+     
+     # Minimum score threshold for confident match (aligned with NetEase)
+@@ -136,16 +139,34 @@ class QQMusicProvider(LyricsProvider):
+         Returns:
+             Optional[Dict]: JSON response or None if failed
+         """
+-        max_retries = 4
+-        retry_delay = 1.5
++        # QQ's legacy search endpoint (c.y.qq.com/soso/...) now answers HTTP 500 to every
++        # query. Retrying 4x per song only added ~15s of delay and 5 ERROR lines, so:
++        #  - HTTP errors are not retried; a 5xx puts QQ in a cooldown and it is skipped
++        #    (with one warning) until the cooldown ends, then tried again.
++        #  - Only network-level failures (timeouts, resets) are retried, once.
++        now = time.time()
++        if now < QQMusicProvider._cooldown_until:
++            logger.debug("QQ - Skipped (provider in cooldown after server errors)")
++            return None
+ 
+-        for attempt in range(max_retries):
++        retry_delay = 1.5
++        max_attempts = 2
++        for attempt in range(max_attempts):
+             try:
+                 # Add random delay between requests
+                 time.sleep(random.uniform(0.5, 2))
+                 
+                 response = self.session.request(method, url, timeout=10, **kwargs)
+-                response.raise_for_status()
++                if response.status_code >= 500:
++                    QQMusicProvider._cooldown_until = time.time() + QQMusicProvider.COOLDOWN_SECONDS
++                    logger.warning(
++                        f"QQ - Server error {response.status_code}; skipping QQ Music for "
++                        f"{QQMusicProvider.COOLDOWN_SECONDS // 60} min (disable it in Settings > Providers "
++                        f"if this keeps happening)")
++                    return None
++                if response.status_code >= 400:
++                    logger.info(f"QQ - Request rejected (HTTP {response.status_code})")
++                    return None
+                 
+                 # Handle QQ Music's JSONP responses
+                 content = response.text
+@@ -156,13 +177,17 @@ class QQMusicProvider(LyricsProvider):
+                 
+                 return json.loads(content)
+                 
++            except ValueError as e:
++                logger.info(f"QQ - Unreadable response: {e}")
++                return None
+             except Exception as e:
+-                logger.error(f"QQ - Request attempt {attempt + 1} failed: {str(e)}")
+-                if attempt < max_retries - 1:
+-                    time.sleep(retry_delay * (attempt + 1))
++                if attempt < max_attempts - 1:
++                    logger.debug(f"QQ - Network error ({type(e).__name__}), retrying once")
++                    time.sleep(retry_delay)
+                 else:
+-                    logger.error("QQ - Max retries reached. Request failed.")
++                    logger.warning(f"QQ - Request failed: {type(e).__name__}: {e}")
+                     return None
++        return None
+ 
+     def _search_song(self, keyword: str) -> Optional[Dict[str, Any]]:
+         """
