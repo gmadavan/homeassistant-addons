@@ -1,0 +1,210 @@
+diff --git a/providers/lrclib.py b/providers/lrclib.py
+index a1eb345..ea7aa88 100644
+--- a/providers/lrclib.py
++++ b/providers/lrclib.py
+@@ -7,8 +7,9 @@ from pathlib import Path
+ sys.path.append(str(Path(__file__).parent.parent)) 
+ 
+ import logging
++import re
+ import time
+-from typing import Optional, Dict, Any
++from typing import Optional, Dict, Any, List
+ 
+ import requests as req
+ from .base import LyricsProvider
+@@ -17,6 +18,40 @@ from logging_config import get_logger
+ 
+ logger = get_logger(__name__)
+ 
++# --- Multi-artist / decorated-title fallback helpers ---------------------------
++# Indian film music (and many compilations) tag several singers in one artist
++# field, e.g. "K.S. Chithra, Ilaiyaraaja & Arunmozhi", and often append the film
++# name to the title, e.g. "Adada Mamara (Chittukuruvi)". LRCLib usually stores
++# such songs under ONE artist and the bare title, so exact/field searches miss.
++
++_ARTIST_SPLIT_RE = re.compile(
++    r"\s*(?:,|;|/|&|\+|\bx\b|\band\b|\bfeat\.?|\bft\.?|\bfeaturing\b|\bwith\b)\s*",
++    re.IGNORECASE,
++)
++_TITLE_DECOR_RE = re.compile(r"\s*[\(\[][^\)\]]*[\)\]]\s*")
++_TITLE_DASH_RE = re.compile(r"\s+-\s+.*$")
++
++
++def _split_artists(artist: str) -> List[str]:
++    parts = [a.strip() for a in _ARTIST_SPLIT_RE.split(artist or "") if a and a.strip()]
++    seen, out = set(), []
++    for a in parts:
++        k = a.lower()
++        if k not in seen:
++            seen.add(k)
++            out.append(a)
++    return out
++
++
++def _clean_title(title: str) -> str:
++    t = _TITLE_DECOR_RE.sub(" ", title or "")
++    t = _TITLE_DASH_RE.sub("", t)
++    return re.sub(r"\s+", " ", t).strip() or (title or "").strip()
++
++
++def _norm(s: str) -> str:
++    return re.sub(r"[^0-9a-z]+", "", (s or "").lower())
++
+ class LRCLIBProvider(LyricsProvider):
+     # Define constants for the API
+     BASE_URL = "https://lrclib.net/api"
+@@ -92,6 +127,78 @@ class LRCLIBProvider(LyricsProvider):
+                     return None
+         return None
+     
++    def _pick_best(self, results: list, artist: str, title: str, duration: Optional[int],
++                   require_match: bool) -> Optional[dict]:
++        """
++        Choose the best usable result (synced lyrics or instrumental).
++
++        A result's title must match the playing title (ignoring "(film name)" style
++        suffixes). With require_match=True (loose fallback searches) it must also either
++        be within 6s of the playing track's duration or share one of its artists, so a
++        title-only search cannot return a different song with the same name.
++        """
++        want_title = _norm(_clean_title(title))
++        want_artists = {_norm(a) for a in _split_artists(artist)} - {""}
++        best, best_score = None, None
++        for r in results or []:
++            if not (r.get("syncedLyrics") or r.get("instrumental")):
++                continue
++            r_title = _norm(_clean_title(r.get("trackName", "")))
++            r_artists = {_norm(a) for a in _split_artists(r.get("artistName", ""))} - {""}
++            title_ok = bool(want_title) and (r_title == want_title or
++                                             r_title.startswith(want_title) or
++                                             want_title.startswith(r_title))
++            artist_ok = bool(want_artists & r_artists) or any(
++                wa and ra and (wa in ra or ra in wa) for wa in want_artists for ra in r_artists)
++            dur_diff = None
++            if duration and r.get("duration"):
++                dur_diff = abs(float(r["duration"]) - float(duration))
++            dur_ok = dur_diff is not None and dur_diff <= 6
++            if not title_ok:
++                continue  # never show lyrics of a differently named song
++            if require_match and not (dur_ok or artist_ok):
++                continue
++            if duration and dur_diff is not None and dur_diff > 20 and not artist_ok:
++                continue  # almost certainly a different recording
++            score = (0 if title_ok else 1, 0 if artist_ok else 1,
++                     dur_diff if dur_diff is not None else 999)
++            if best_score is None or score < best_score:
++                best, best_score = r, score
++        return best
++
++    def _fallback_search(self, artist: str, title: str, duration: Optional[int]) -> Optional[dict]:
++        """Retry with each individual artist and a cleaned title, then title only."""
++        clean = _clean_title(title)
++        artists = _split_artists(artist)
++        attempts = []
++        if len(artists) > 1 or clean != title:
++            for a in artists:
++                attempts.append(("artist+title", {"track_name": clean, "artist_name": a}))
++        attempts.append(("title only", {"q": clean}))
++        if clean != title:
++            attempts.append(("full title", {"q": title}))
++
++        tried = set()
++        for label, params in attempts:
++            key = tuple(sorted(params.items()))
++            if key in tried:
++                continue
++            tried.add(key)
++            logger.info(f"LRCLib - Fallback search ({label}): {params}")
++            resp = self._make_request(f"{self.BASE_URL}/search", params)
++            if not resp or resp.status_code != 200:
++                continue
++            try:
++                results = resp.json()
++            except ValueError:
++                continue
++            match = self._pick_best(results, artist, title, duration, require_match=True)
++            if match:
++                logger.info(f"LRCLib - Fallback matched: {match.get('trackName')} by "
++                            f"{match.get('artistName')} (duration {match.get('duration')})")
++                return match
++        return None
++    
+     def get_lyrics(self, artist: str, title: str, album: str = None, duration: int = None) -> Optional[Dict[str, Any]]:
+         """
+         Get lyrics using LRCLIB API
+@@ -170,23 +277,18 @@ class LRCLIBProvider(LyricsProvider):
+                         if gen_resp and gen_resp.status_code == 200:
+                             search_result = gen_resp.json()
+                     
+-                    if not search_result: 
+-                        logger.info(f"LRCLib - No search results found for: {artist} - {title}")
+-                        return None
+-                    
+-                    # Iterate through search results to find one with synced lyrics OR instrumental flag
+-                    # Accept instrumental tracks even if they don't have synced lyrics
+-                    found_match = False
+-                    for result in search_result:
+-                        if result.get("syncedLyrics") or result.get("instrumental"):
+-                            response = result
+-                            found_match = True
+-                            logger.info(f"LRCLib - Found match in search results: {result.get('trackName')} by {result.get('artistName')} (instrumental: {result.get('instrumental', False)})")
+-                            break
++                    # Prefer the result closest in duration (avoids wrong versions)
++                    result = self._pick_best(search_result, artist, title, duration, require_match=False)
++                    if result:
++                        logger.info(f"LRCLib - Found match in search results: {result.get('trackName')} by {result.get('artistName')} (instrumental: {result.get('instrumental', False)})")
++                    else:
++                        # Multi-artist tags / film-name suffixes defeat the searches above
++                        result = self._fallback_search(artist, title, duration)
+                     
+-                    if not found_match:
+-                        logger.info(f"LRCLib - Search results found but none had synced lyrics or instrumental flag")
++                    if not result:
++                        logger.info(f"LRCLib - No synced lyrics found in any search for: {artist} - {title}")
+                         return None
++                    response = result
+                         
+                 except Exception as e:
+                     logger.error(f"LRCLib - Search request failed: {e}")
+diff --git a/providers/musixmatch.py b/providers/musixmatch.py
+index 62e15d6..975d804 100644
+--- a/providers/musixmatch.py
++++ b/providers/musixmatch.py
+@@ -357,6 +357,12 @@ class MusixmatchProvider(LyricsProvider):
+             
+             logger.info(f"Musixmatch - Found: {track_name} by {artist_name} (subtitles: {has_subtitles}, richsync: {has_richsync})")
+             
++            # Guard against the matcher returning an unrelated track (seen as the same
++            # "NOKIA by Drake" hit for every query when the shared token is degraded).
++            if not self._titles_match(title, track_name):
++                logger.info(f"Musixmatch - Ignoring unrelated match '{track_name}' for query '{title}'")
++                return None
++            
+             # Handle instrumental tracks
+             if is_instrumental:
+                 logger.info("Musixmatch - Instrumental track")
+@@ -422,6 +428,23 @@ class MusixmatchProvider(LyricsProvider):
+             logger.error(f"Musixmatch - Error: {e}")
+             return None
+     
++    @staticmethod
++    def _titles_match(query: str, found: str) -> bool:
++        """Loose title comparison: ignores (film name)/[..] suffixes, case and punctuation."""
++        import re as _re
++        def words(t):
++            t = _re.sub(r"[\(\[][^\)\]]*[\)\]]", " ", t or "")
++            t = _re.sub(r"\s+-\s+.*$", "", t)
++            return [w for w in _re.findall(r"[0-9a-z]+", t.lower()) if w]
++        q, f = words(query), words(found)
++        if not q or not f:
++            return True  # nothing to compare (e.g. non-Latin titles) - don't block
++        qs, fs = "".join(q), "".join(f)
++        if qs in fs or fs in qs:
++            return True
++        overlap = len(set(q) & set(f)) / max(1, min(len(set(q)), len(set(f))))
++        return overlap >= 0.5
++    
+     def _fetch_richsync(self, track_id: int, commontrack_id: int, token: str) -> Optional[List[Dict[str, Any]]]:
+         """
+         Fetch RichSync (word-synced) lyrics for a track.
