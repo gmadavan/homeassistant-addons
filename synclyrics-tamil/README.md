@@ -1,7 +1,13 @@
 # SyncLyrics (multi-artist fix)
 
-Same as the upstream SyncLyrics add-on, built locally with one patch
-(`patches/0001-lyrics-multi-artist-fallback.patch`) applied to the upstream code:
+Same as the upstream SyncLyrics add-on, with the patches in `patches/` applied on top.
+
+**Fast build (fix4):** the Dockerfile starts from the author's published, already-compiled
+image (`ghcr.io/anshulj999/synclyrics-ha-<arch>:2.4.0`) and only applies the patches, so
+installs and updates take a minute or two. To follow a new upstream release, bump
+`UPSTREAM_VERSION` in the Dockerfile and `version:` in config.yaml.
+
+Patches:
 
 - **LRCLib:** when the normal searches find nothing, retry with each individual
   artist ("K.S. Chithra, Ilaiyaraaja & Arunmozhi" -> "Arunmozhi", ...) and with the
