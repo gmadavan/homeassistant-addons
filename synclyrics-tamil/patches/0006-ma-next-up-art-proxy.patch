@@ -1,0 +1,85 @@
+diff --git a/server.py b/server.py
+index 4755ebe..4a0f4d9 100644
+--- a/server.py
++++ b/server.py
+@@ -1799,6 +1799,32 @@ async def serve_album_art_image(folder_name: str, filename: str):
+ 
+ # --- Playback Control API (The New Features) ---
+ 
++@app.route("/api/ma-image")
++async def get_ma_image():
++    """Proxy a Music Assistant image (e.g. the next-up card) so the browser
++    loads it from this server instead of the MA address directly."""
++    from quart import Response
++    import aiohttp
++    from system_utils.sources import music_assistant as ma_source
++
++    url = request.args.get("u", "")
++    if not url or not ma_source.is_allowed_image_url(url):
++        return Response(status=404)
++    try:
++        timeout = aiohttp.ClientTimeout(total=10)
++        async with aiohttp.ClientSession(timeout=timeout) as session:
++            async with session.get(url) as resp:
++                ctype = resp.headers.get("Content-Type", "")
++                if resp.status != 200 or not ctype.startswith("image/"):
++                    return Response(status=404)
++                data = await resp.read()
++    except Exception as e:
++        logger.debug(f"MA image proxy failed for {url}: {e}")
++        return Response(status=404)
++    return Response(data, content_type=ctype,
++                    headers={"Cache-Control": "public, max-age=86400"})
++
++
+ @app.route("/cover-art")
+ async def get_cover_art():
+     """Serves the album art or background image directly from the source (DB or Thumbnail) without race conditions."""
+diff --git a/system_utils/sources/music_assistant.py b/system_utils/sources/music_assistant.py
+index 68818f7..f0c4b5c 100644
+--- a/system_utils/sources/music_assistant.py
++++ b/system_utils/sources/music_assistant.py
+@@ -280,6 +280,27 @@ async def _background_connect():
+             _connecting = False
+ 
+ 
++def proxied_image_url(url: str) -> str:
++    """Route a Music Assistant image URL through SyncLyrics' /api/ma-image."""
++    import urllib.parse
++    # music-assistant-client builds weserv thumbnails as "&w=$256" (stray "$")
++    url = url.replace("&w=$", "&w=").replace("&h=$", "&h=")
++    return "/api/ma-image?u=" + urllib.parse.quote(url, safe="")
++
++
++def is_allowed_image_url(url: str) -> bool:
++    """Only fetch images from the MA server itself or MA's thumbnail service."""
++    bases = [_get_config_value("system.music_assistant.server_url", "") or ""]
++    try:
++        if _client and _client.server_info:
++            bases.append(_client.server_info.base_url or "")
++    except Exception:
++        pass
++    bases = [b.rstrip("/") + "/" for b in bases if b]
++    bases.append("https://images.weserv.nl/")
++    return any(url.startswith(b) for b in bases)
++
++
+ def _get_target_player_id() -> Optional[str]:
+     """
+     Get the player ID to monitor.
+@@ -753,9 +774,14 @@ class MusicAssistantSource(BaseMetadataSource):
+                 # Get album art
+                 art_url = None
+                 try:
+-                    art_url = _client.get_media_item_image_url(item, size=64)
++                    art_url = _client.get_media_item_image_url(item, size=256)
+                 except Exception:
+                     pass
++                if art_url:
++                    # Serve through SyncLyrics' own server: the browser often cannot
++                    # load the MA URL directly (LAN-only address blocked by Chrome's
++                    # local network access check, or behind a login page).
++                    art_url = proxied_image_url(art_url)
+                 
+                 queue_items.append({
+                     "name": media.name or item.name,

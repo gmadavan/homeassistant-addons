@@ -1,5 +1,5 @@
 name: "SyncLyrics (multi-artist fix)"
-version: "2.4.0-fix6"
+version: "2.4.0-fix7"
 slug: "synclyrics_fix"
 init: false
 description: "SyncLyrics with better lyric matching for multi-artist and film-soundtrack tags. Built locally."

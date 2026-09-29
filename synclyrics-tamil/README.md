@@ -51,3 +51,7 @@ Tokens are personal; treat them like a password. They can expire - if the log sh
   reporting "playing" - often a TV running YouTube, which has no Music Assistant queue,
   so the page stayed Idle while music played elsewhere. Players playing a Music Assistant
   queue are now preferred.
+- **Next-up cover (fix7):** the "next song" card loaded its cover straight from the Music
+  Assistant address, which the browser often can't reach (LAN-only address blocked by
+  Chrome's local network access check), so it showed a broken image. SyncLyrics now serves
+  that cover itself via `/api/ma-image` (only Music Assistant image URLs are accepted).
