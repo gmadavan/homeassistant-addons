@@ -1,0 +1,193 @@
+diff --git a/providers/album_art.py b/providers/album_art.py
+index 4cca13a..bedd8ac 100644
+--- a/providers/album_art.py
++++ b/providers/album_art.py
+@@ -100,112 +100,89 @@ class AlbumArtProvider:
+             return None
+             
+         try:
+-            # Build search query - prefer album if available for better accuracy
+-            search_term = f"{artist} {title}"
+-            if album:
+-                search_term = f"{artist} {album}"
++            # --- Search + strict validation -------------------------------------------
++            # Previously any result by the same artist was accepted (and, failing that,
++            # simply the first result), so a compilation track like
++            # "Annakkili [From 'Annakkili']" on "Legends - Ilaiyaraaja Vol.1" got the cover
++            # of some other S. Janaki film. Now a result is accepted only if its ALBUM
++            # matches, or its TITLE matches after stripping "[From 'Film']" style
++            # decorations. If nothing qualifies we return None so the player's own cover
++            # (e.g. Music Assistant's) is used instead of a wrong one.
++            def _clean(t: str) -> str:
++                t = re.sub(r"\s*[\(\[][^\)\]]*[\)\]]", " ", t or "")
++                t = re.sub(r"\s+-\s+.*$", "", t)
++                return re.sub(r"[^0-9a-z]+", "", t.lower())
++            
++            def _norm_album(a: str) -> str:
++                a = (a or "").lower().strip()
++                for suffix in [" (deluxe edition)", " (deluxe)", " (remastered)", " (remaster)", " (expanded edition)"]:
++                    if a.endswith(suffix):
++                        a = a[:-len(suffix)]
++                        break
++                return a
+             
+-            # iTunes Search API (free, no auth required)
+-            url = "https://itunes.apple.com/search"
+-            params = {
+-                "term": search_term,
+-                "media": "music",
+-                "entity": "song",
+-                "limit": 10  # Get multiple results to find best match
+-            }
++            _an = lambda a: re.sub(r"[^0-9a-z]+", "", (a or "").lower())  # "S.Janaki" == "S. Janaki"
++            artist_raw_parts = [a.strip() for a in re.split(r"\s*(?:,|&|/|;|\bfeat\.?|\bft\.?)\s*", artist or "") if a.strip()]
++            artist_parts = [_an(a) for a in artist_raw_parts if _an(a)]
++            artist_lower = _an(artist)
++            want_title = _clean(title)
++            target_album_normalized = _norm_album(album) if album else None
+             
+-            response = requests.get(url, params=params, timeout=self.timeout)
+-            if response.status_code != 200:
+-                return None
+-                
+-            data = response.json()
+-            if not data.get("results"):
+-                return None
+-            
+-            # Normalize album name for comparison (if provided)
+-            target_album_normalized = None
++            queries = []
+             if album:
+-                target_album_normalized = album.lower().strip()
+-                # Remove common suffixes that might differ between platforms
+-                for suffix in [" (deluxe edition)", " (deluxe)", " (remastered)", " (remaster)", " (expanded edition)"]:
+-                    if target_album_normalized.endswith(suffix.lower()):
+-                        target_album_normalized = target_album_normalized[:-len(suffix)]
+-                        break
++                queries.append(f"{artist} {album}")
++            clean_title_words = re.sub(r"\s*[\(\[][^\)\]]*[\)\]]", " ", title or "").strip()
++            queries.append(f"{artist_raw_parts[0] if artist_raw_parts else artist} {clean_title_words}")
+             
+-            # Find best matching track
++            url = "https://itunes.apple.com/search"
+             best_match = None
+             best_score = 0
+-            
+-            for track in data["results"]:
+-                itunes_album = track.get("collectionName", "").lower().strip()
+-                itunes_artist = track.get("artistName", "").lower().strip()
+-                itunes_title = track.get("trackName", "").lower().strip()
+-                
+-                # Normalize iTunes album name (remove common suffixes)
+-                itunes_album_normalized = itunes_album
+-                for suffix in [" (deluxe edition)", " (deluxe)", " (remastered)", " (remaster)", " (expanded edition)"]:
+-                    if itunes_album_normalized.endswith(suffix.lower()):
+-                        itunes_album_normalized = itunes_album_normalized[:-len(suffix)]
+-                        break
+-                
+-                # Score the match
+-                score = 0
+-                
+-                # Artist match (required)
+-                artist_lower = artist.lower().strip()
+-                itunes_artist_lower = itunes_artist # Already lower/stripped above
+-                
+-                # Exact match (best)
+-                if artist_lower == itunes_artist_lower:
+-                    score += 50
+-                # Word-based match (good for "The Beatles" vs "Beatles")
+-                # This prevents "Sting" from matching "Casting Crowns" while allowing partial word matches
+-                elif artist_lower in itunes_artist_lower.split() or itunes_artist_lower in artist_lower.split():
+-                    score += 30
+-                # Lenient substring (fallback, lower score)
+-                elif artist_lower in itunes_artist_lower or itunes_artist_lower in artist_lower:
+-                    score += 10
+-                else:
+-                    continue  # Skip if artist doesn't match
+-                
+-                # Album match (high priority if album name provided)
+-                if target_album_normalized:
+-                    if itunes_album_normalized == target_album_normalized:
+-                        score += 50  # Exact album match
+-                    elif target_album_normalized in itunes_album_normalized or itunes_album_normalized in target_album_normalized:
+-                        score += 30  # Partial album match
+-                else:
+-                    # No album to compare, check title match
+-                    if title.lower().strip() in itunes_title or itunes_title in title.lower().strip():
++            for search_term in queries:
++                params = {"term": search_term, "media": "music", "entity": "song", "limit": 10}
++                response = requests.get(url, params=params, timeout=self.timeout)
++                if response.status_code != 200:
++                    continue
++                for track in (response.json().get("results") or []):
++                    itunes_album_normalized = _norm_album(track.get("collectionName", ""))
++                    itunes_artist = _an(track.get("artistName", ""))
++                    itunes_title = _clean(track.get("trackName", ""))
++                    
++                    # Artist must match (whole string or any credited artist)
++                    if artist_lower == itunes_artist:
++                        score = 50
++                    elif any(p and (p == itunes_artist or p in itunes_artist or itunes_artist in p) for p in artist_parts):
++                        score = 30
++                    else:
++                        continue
++                    
++                    album_ok = False
++                    if target_album_normalized:
++                        if itunes_album_normalized == target_album_normalized:
++                            score += 50; album_ok = True
++                        elif target_album_normalized in itunes_album_normalized or itunes_album_normalized in target_album_normalized:
++                            score += 30; album_ok = True
++                    
++                    title_ok = bool(want_title) and bool(itunes_title) and (
++                        itunes_title == want_title or itunes_title.startswith(want_title) or want_title.startswith(itunes_title))
++                    if title_ok:
+                         score += 20
+-                
+-                # Track title match (lower priority than album)
+-                if title.lower().strip() in itunes_title or itunes_title in title.lower().strip():
+-                    score += 10
+-                
+-                # Prefer higher resolution results
+-                if track.get("artworkUrl1000"):
+-                    score += 5
+-                elif track.get("artworkUrl512"):
+-                    score += 3
+-                
+-                if score > best_score:
+-                    best_score = score
+-                    best_match = track
+-            
+-            # Use best match, or fall back to first result if no good match found
+-            if best_match and best_score >= 10:  # At least artist match required
+-                track = best_match
+-                if target_album_normalized and best_score < 40:
+-                    # Album name provided but no good match - log warning
+-                    itunes_album = track.get("collectionName", "Unknown")
+-                    logger.debug(f"iTunes: Album name mismatch - Spotify: '{album}', iTunes: '{itunes_album}' (using best match anyway)")
+-            else:
+-                # Fall back to first result
+-                track = data["results"][0]
+-                if target_album_normalized:
+-                    itunes_album = track.get("collectionName", "Unknown")
+-                    logger.debug(f"iTunes: No good match found, using first result - Spotify: '{album}', iTunes: '{itunes_album}'")
++                    
++                    if not (album_ok or title_ok):
++                        continue  # same artist, different song/album - wrong cover
++                    
++                    if track.get("artworkUrl1000"):
++                        score += 5
++                    elif track.get("artworkUrl512"):
++                        score += 3
++                    if score > best_score:
++                        best_score, best_match = score, track
++                if best_match and best_score >= 80:
++                    break  # confident match from the first query, skip the second
++            
++            if not best_match:
++                logger.debug(f"iTunes: No matching album/track for {artist} - {title}; not using iTunes art")
++                return None
++            track = best_match
+             
+             # Get artwork URL - iTunes provides different sizes
+             # artworkUrl100 = 100x100

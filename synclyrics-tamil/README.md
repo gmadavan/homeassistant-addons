@@ -43,3 +43,7 @@ The token is the `usertoken` the Musixmatch **desktop app** sends to
 
 Tokens are personal; treat them like a password. They can expire - if the log shows
 "Configured login token was rejected", repeat the steps.
+- **Album covers (fix5):** the iTunes cover lookup used to accept any song by the same
+  artist (or even the first search result), so tracks on compilations got the cover of an
+  unrelated film. A cover is now used only if its album or its title (ignoring
+  "[From 'Film']" style suffixes) matches; otherwise the player's own cover is kept.
