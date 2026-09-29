@@ -1,0 +1,86 @@
+diff --git a/providers/musixmatch.py b/providers/musixmatch.py
+index 975d804..2268971 100644
+--- a/providers/musixmatch.py
++++ b/providers/musixmatch.py
+@@ -62,11 +62,23 @@ class MusixmatchProvider(LyricsProvider):
+         # Rate limiting
+         self._last_request_time: float = 0
+         
++        # Optional personal login token (Musixmatch desktop-app "usertoken").
++        # The anonymous guest token that token.get hands out is now served a
++        # placeholder match ("NOKIA by Drake") for every query, so a logged-in
++        # token is the only way to get real results. Set via env
++        # PROVIDERS_MUSIXMATCH_USER_TOKEN / PROVIDERS_MUSIXMATCH_TOKEN_GUID or settings.
++        from config import conf as _conf
++        self._user_token: str = str(_conf("providers.musixmatch.user_token", "") or "").strip()
++        token_guid = str(_conf("providers.musixmatch.token_guid", "") or "").strip()
++        self._user_token_rejected: bool = False
++        
+         # Headers for desktop API
+         self._headers = {
+             "authority": "apic-desktop.musixmatch.com",
+-            "cookie": "x-mxm-token-guid=",
++            "cookie": f"x-mxm-token-guid={token_guid}",
+         }
++        if self._user_token:
++            logger.info("Musixmatch - Using configured login token")
+     
+     def _get_token(self) -> Optional[str]:
+         """
+@@ -74,6 +86,10 @@ class MusixmatchProvider(LyricsProvider):
+         Fetches new token if expired or not available.
+         Falls back to DEFAULT_TOKEN if fetch fails.
+         """
++        # A configured login token is used as-is (no guest token.get).
++        if self._user_token:
++            return None if self._user_token_rejected else self._user_token
++        
+         # Return cached token if still valid (with 60s buffer)
+         if self._token and time.time() < (self._token_expires - 60):
+             return self._token
+@@ -256,7 +272,8 @@ class MusixmatchProvider(LyricsProvider):
+             # Get valid token
+             token = self._get_token()
+             if not token:
+-                logger.warning("Musixmatch - No token available")
++                if not self._user_token_rejected:
++                    logger.warning("Musixmatch - No token available")
+                 return None
+             
+             # Clean up input strings
+@@ -296,7 +313,10 @@ class MusixmatchProvider(LyricsProvider):
+             header = data.get("message", {}).get("header", {})
+             if header.get("status_code") != 200:
+                 hint = header.get("hint", "")
+-                if hint == "renew" and _retry:
++                if hint in ("renew", "unauthorized") and self._user_token:
++                    self._reject_user_token(hint)
++                    return None
++                elif hint == "renew" and _retry:
+                     # Token expired - refresh and retry once
+                     logger.info("Musixmatch - Token expired, refreshing...")
+                     self._token = None
+@@ -324,6 +344,9 @@ class MusixmatchProvider(LyricsProvider):
+             if track_status == 404:
+                 logger.info(f"Musixmatch - Track not found: {artist} - {title}")
+                 return None
++            elif track_status == 401 and self._user_token:
++                self._reject_user_token("401")
++                return None
+             elif track_status == 401 and _retry:
+                 # Token invalid - refresh and retry once
+                 logger.warning("Musixmatch - Token invalid, refreshing...")
+@@ -428,6 +451,13 @@ class MusixmatchProvider(LyricsProvider):
+             logger.error(f"Musixmatch - Error: {e}")
+             return None
+     
++    def _reject_user_token(self, reason: str) -> None:
++        """Stop using a configured login token Musixmatch no longer accepts (logged once)."""
++        if not self._user_token_rejected:
++            logger.warning(f"Musixmatch - Configured login token was rejected ({reason}); "
++                           f"Musixmatch is skipped until you set a fresh token and restart")
++        self._user_token_rejected = True
++    
+     @staticmethod
+     def _titles_match(query: str, found: str) -> bool:
+         """Loose title comparison: ignores (film name)/[..] suffixes, case and punctuation."""

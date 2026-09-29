@@ -59,6 +59,12 @@ configuration:
   music_assistant_player_id:
     name: "Music Assistant Player ID"
     description: "Specific player ID (leave empty to auto-detect first active player)"
+  musixmatch_user_token:
+    name: "Musixmatch login token"
+    description: "Optional. Your own Musixmatch desktop-app 'usertoken' (see add-on README). The anonymous guest token no longer returns real matches."
+  musixmatch_token_guid:
+    name: "Musixmatch token GUID"
+    description: "Optional. The 'x-mxm-token-guid' cookie that belongs to the login token above."
   compatibility_mode:
     name: "CPU Compatibility Mode"
     description: "Enable if experiencing crashes on Intel Xeon or server-grade CPUs. Uses conservative OpenBLAS settings."

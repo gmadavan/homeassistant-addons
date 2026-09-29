@@ -41,6 +41,11 @@ export SYSTEM_MUSIC_ASSISTANT_SERVER_URL=$(get_config 'music_assistant_server_ur
 export SYSTEM_MUSIC_ASSISTANT_TOKEN=$(get_config 'music_assistant_token')
 export SYSTEM_MUSIC_ASSISTANT_PLAYER_ID=$(get_config 'music_assistant_player_id')
 
+# Musixmatch login token (optional; see README). Env names match config.py's
+# conf() lookup: providers.musixmatch.user_token -> PROVIDERS_MUSIXMATCH_USER_TOKEN
+export PROVIDERS_MUSIXMATCH_USER_TOKEN=$(get_config 'musixmatch_user_token')
+export PROVIDERS_MUSIXMATCH_TOKEN_GUID=$(get_config 'musixmatch_token_guid')
+
 # =============================================================================
 # OpenBLAS Compatibility Mode (for Intel Xeon / musl libc issues)
 # =============================================================================
