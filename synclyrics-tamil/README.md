@@ -47,3 +47,7 @@ Tokens are personal; treat them like a password. They can expire - if the log sh
   artist (or even the first search result), so tracks on compilations got the cover of an
   unrelated film. A cover is now used only if its album or its title (ignoring
   "[From 'Film']" style suffixes) matches; otherwise the player's own cover is kept.
+- **Player choice (fix6):** with no player set, SyncLyrics followed the first player
+  reporting "playing" - often a TV running YouTube, which has no Music Assistant queue,
+  so the page stayed Idle while music played elsewhere. Players playing a Music Assistant
+  queue are now preferred.

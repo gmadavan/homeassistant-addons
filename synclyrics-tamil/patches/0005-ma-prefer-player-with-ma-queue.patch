@@ -1,0 +1,37 @@
+diff --git a/system_utils/sources/music_assistant.py b/system_utils/sources/music_assistant.py
+index 9b79df0..68818f7 100644
+--- a/system_utils/sources/music_assistant.py
++++ b/system_utils/sources/music_assistant.py
+@@ -309,15 +309,23 @@ def _get_target_player_id() -> Optional[str]:
+             logger.debug(f"Configured player_id '{preferred_id}' not found")
+             _last_player_not_found_log = now
+     
+-    # Find first playing player
+-    for player in _client.players.players:
+-        if player.playback_state and player.playback_state.value == "playing":
+-            _last_active_player_id = player.player_id  # Remember active player
+-            return player.player_id
+-    
+-    # Find first paused player (recently active)
+-    for player in _client.players.players:
+-        if player.playback_state and player.playback_state.value == "paused":
++    # Prefer players playing Music Assistant's own queue. A Cast/TV player can
++    # report "playing" while running another app (e.g. YouTube); it has no MA
++    # queue, so picking it left the lyrics page idle while music played elsewhere.
++    def _plays_ma_queue(player) -> bool:
++        try:
++            queue = _client.player_queues.get(player.active_source or player.player_id)
++            return bool(queue and queue.active and queue.current_item)
++        except Exception:
++            return False
++
++    players_now = list(_client.players.players)
++    for wanted in ("playing", "paused"):
++        in_state = [p for p in players_now
++                    if p.playback_state and p.playback_state.value == wanted]
++        for player in sorted(in_state, key=lambda p: not _plays_ma_queue(p)):
++            if wanted == "playing":
++                _last_active_player_id = player.player_id  # Remember active player
+             return player.player_id
+     
+     # Use last active player if still exists
