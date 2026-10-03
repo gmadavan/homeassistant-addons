@@ -59,3 +59,6 @@ Tokens are personal; treat them like a password. They can expire - if the log sh
   page no longer shows the Spotify logo on the media-browser button, a "Spotify" source
   label, or the "Login with Spotify" overlay. Showing another company's logo and login
   prompt on a self-hosted page can make Chrome's Safe Browsing flag it as "Dangerous".
+- **Neutral look and no indexing (fix9):** the browser/app theme colour was Spotify green;
+  it is now the page's own dark blue. Every response carries `X-Robots-Tag: noindex` (and
+  the page a `robots` meta tag) so search engines don't index this private page.

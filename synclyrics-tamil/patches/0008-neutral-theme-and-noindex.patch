@@ -1,0 +1,55 @@
+diff --git a/resources/manifest.json b/resources/manifest.json
+index 23ac1ee..871c7bb 100644
+--- a/resources/manifest.json
++++ b/resources/manifest.json
+@@ -6,7 +6,7 @@
+     "scope": "/",
+     "display": "fullscreen",
+     "orientation": "any",
+-    "theme_color": "#1db954",
++    "theme_color": "#24273a",
+     "background_color": "#000000",
+     "categories": [
+         "music",
+diff --git a/resources/templates/base.html b/resources/templates/base.html
+index 540cbf3..252b58c 100644
+--- a/resources/templates/base.html
++++ b/resources/templates/base.html
+@@ -5,7 +5,9 @@
+     <meta charset="UTF-8">
+     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+     <!-- PWA Meta Tags -->
+-    <meta name="theme-color" content="#1db954">
++    <meta name="theme-color" content="#24273a">
++    <!-- Private self-hosted page: keep it out of search engines -->
++    <meta name="robots" content="noindex, nofollow">
+     <meta name="mobile-web-app-capable" content="yes">
+     <meta name="apple-mobile-web-app-capable" content="yes">
+     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+diff --git a/resources/templates/index.html b/resources/templates/index.html
+index e3138ab..ca8246b 100644
+--- a/resources/templates/index.html
++++ b/resources/templates/index.html
+@@ -720,7 +720,7 @@
+             <span class="volume-value">50%</span>
+         </div>
+         <div class="volume-row" id="volume-spotify" style="display: none;">
+-            <span class="volume-label"><i class="bi bi-spotify"></i> Spotify</span>
++            <span class="volume-label"><i class="bi {{ 'bi-spotify' if spotify_configured else 'bi-volume-up' }}"></i> {{ 'Spotify' if spotify_configured else 'Player' }}</span>
+             <input type="range" class="volume-slider" data-source="spotify" min="0" max="100" value="50">
+             <span class="volume-value">50%</span>
+         </div>
+diff --git a/server.py b/server.py
+index ae47fa9..fc2e084 100644
+--- a/server.py
++++ b/server.py
+@@ -90,6 +90,9 @@ async def add_cache_headers(response):
+     This fixes stale cache issues in Home Assistant iFrame while maintaining performance.
+     """
+     req_path = request.path
++
++    # Private self-hosted app: ask search engines not to index any of it
++    response.headers['X-Robots-Tag'] = 'noindex, nofollow'
+     
+     # Media browser static assets (React build with content hashes - safe to cache forever)
+     if req_path.startswith('/media-browser/static/'):
