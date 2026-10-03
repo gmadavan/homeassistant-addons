@@ -55,3 +55,7 @@ Tokens are personal; treat them like a password. They can expire - if the log sh
   Assistant address, which the browser often can't reach (LAN-only address blocked by
   Chrome's local network access check), so it showed a broken image. SyncLyrics now serves
   that cover itself via `/api/ma-image` (only Music Assistant image URLs are accepted).
+- **No Spotify branding unless Spotify is set up (fix8):** without Spotify credentials the
+  page no longer shows the Spotify logo on the media-browser button, a "Spotify" source
+  label, or the "Login with Spotify" overlay. Showing another company's logo and login
+  prompt on a self-hosted page can make Chrome's Safe Browsing flag it as "Dangerous".

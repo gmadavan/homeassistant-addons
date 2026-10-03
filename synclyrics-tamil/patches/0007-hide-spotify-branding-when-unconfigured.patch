@@ -1,0 +1,91 @@
+diff --git a/resources/js/modules/mediabrowser.js b/resources/js/modules/mediabrowser.js
+index 807ae93..9181059 100644
+--- a/resources/js/modules/mediabrowser.js
++++ b/resources/js/modules/mediabrowser.js
+@@ -284,12 +284,13 @@ export function updateMediaBrowserIcon() {
+         }
+         browserBtn.title = 'Music Assistant Browser';
+     } else {
+-        // Switch to Spotify icon if not already
+-        if (!currentIcon.classList.contains('bi-spotify')) {
++        // Spotify icon only when Spotify is configured; otherwise a neutral icon
++        const iconClass = window.SPOTIFY_CONFIGURED ? 'bi-spotify' : 'bi-collection-play';
++        if (!currentIcon.classList.contains(iconClass)) {
+             const spotifyIcon = document.createElement('i');
+-            spotifyIcon.className = 'bi bi-spotify';
++            spotifyIcon.className = 'bi ' + iconClass;
+             currentIcon.replaceWith(spotifyIcon);
+         }
+-        browserBtn.title = 'Spotify Browser';
++        browserBtn.title = window.SPOTIFY_CONFIGURED ? 'Spotify Browser' : 'Media Browser';
+     }
+ }
+diff --git a/resources/templates/index.html b/resources/templates/index.html
+index 9bc96f5..e3138ab 100644
+--- a/resources/templates/index.html
++++ b/resources/templates/index.html
+@@ -17,7 +17,8 @@
+ </div>
+ 
+ <!-- Spotify Login Overlay (shown when authentication is needed) -->
+-{% if spotify_needs_auth and spotify_auth_url %}
++<script>window.SPOTIFY_CONFIGURED = {{ 'true' if spotify_configured else 'false' }};</script>
++{% if spotify_configured and spotify_needs_auth and spotify_auth_url %}
+ <div id="spotify-login-overlay" class="spotify-login-overlay">
+     <div class="spotify-login-card">
+         <!-- Dismiss button -->
+@@ -105,7 +106,7 @@
+     <!-- Audio Source Toggle Button -->
+     <button id="source-toggle" class="source-toggle" title="Audio Source Settings">
+         <span class="recording-dot" id="recording-dot"></span>
+-        <span class="source-name" id="source-name">Spotify</span>
++        <span class="source-name" id="source-name">{{ 'Spotify' if spotify_configured else '' }}</span>
+     </button>
+ 
+     <!-- Settings Toggle Button -->
+@@ -149,7 +150,7 @@
+                 </div>
+                 <div class="status-row" id="enrichment-row" style="display: none;">
+                     <span class="status-label">Enrichment</span>
+-                    <span class="status-value enriched" id="enrichment-status">☑ Spotify</span>
++                    <span class="status-value enriched" id="enrichment-status"></span>
+                 </div>
+             </div>
+ 
+@@ -388,7 +389,7 @@
+ 
+ <!-- NEW: Media Browser Button (2nd row above visual mode toggle) -->
+ <button id="btn-media-browser" class="media-browser-toggle-btn" title="Media Browser">
+-    <i class="bi bi-spotify"></i>
++    <i class="bi {{ 'bi-spotify' if spotify_configured else 'bi-collection-play' }}"></i>
+ </button>
+ 
+ <!-- NEW: Discreet Lyric/Visual Mode Toggle (Bottom Left) -->
+diff --git a/server.py b/server.py
+index 4a0f4d9..ae47fa9 100644
+--- a/server.py
++++ b/server.py
+@@ -182,8 +182,12 @@ async def index() -> str:
+     # Use the shared singleton client (ensures all stats consolidated)
+     client = get_shared_spotify_client()
+     
++    # Only offer Spotify login (and Spotify branding) when Spotify is actually set up.
++    spotify_configured = bool(SPOTIFY.get("client_id") and SPOTIFY.get("client_secret")
++                              and SPOTIFY.get("redirect_uri"))
++
+     # If we have a client that isn't initialized, get auth URL so user can log in
+-    if client and not client.initialized:
++    if spotify_configured and client and not client.initialized:
+         # Get the auth URL for Spotify login
+         try:
+             spotify_auth_url = client.get_auth_url()
+@@ -216,7 +220,8 @@ async def index() -> str:
+                                 spotify_auth_url=spotify_auth_url,
+                                 spotify_needs_auth=spotify_needs_auth,
+                                 configured_redirect_uri=configured_redirect_uri,
+-                                suggested_redirect_uri=suggested_redirect_uri)
++                                suggested_redirect_uri=suggested_redirect_uri,
++                                spotify_configured=spotify_configured)
+ 
+ 
+ @app.route("/lyrics")
